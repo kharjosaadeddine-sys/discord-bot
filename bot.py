@@ -9,6 +9,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.presences = True
+intents.guilds = True
 
 bot = commands.Bot(command_prefix="$", intents=intents)
 
@@ -16,18 +17,18 @@ store_credits = {}
 EXCHANGE_RATE = 10  
 
 # الآيدي الخاص بك بوحدك (صاحب السيرفر / المالك - التحكم الكامل في النقاط)
-OWNER_ID = 1021501331636244490  
+OWNER_ID = 1021501331636244490 
 
 # الإدارة العامة (باقي الأوامر مثل come, massdm, say, الخ)
 ADMIN_IDS = [1021501331636244490, 1133434766738329640]
 
 FEEDBACK_CHANNEL_ID = 1541011452037439489  
-REPORTS_CHANNEL_ID = 1540809388800081941
 WELCOME_CHANNEL_ID = 1538994818150170714  
 LOGS_CHANNEL_ID = 1538994821455282197  
 DIVIDER_IMAGE_URL = "https://cdn.discordapp.com/attachments/1336759214378582066/1539262263893037086/Gemini_Generated_Image_97gvdg97gvdg97gv.jfif?ex=6a8af331&is=6a89a1b1&hm=d057e94d76fb45c269c7262846cd27c363f1b88d8868586b0aa01121d28e2933"
 
-TICKET_CATEGORY_ID = 1538994815902154852
+# إعدادات التذاكر الجديدة
+TICKET_CATEGORY_ID = 1538994814404792480  # الكاتيجوري المخصصة للتذاكر اللي طلبتها
 TICKET_PANEL_CHANNEL_ID = 1540797737438810172
 
 rated_users = set()
@@ -86,7 +87,7 @@ def parse_amount(amount_str):
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user.name}')
-    print('Bot is ready with full features and strict point controls!')
+    print('Bot is ready with tickets and full features!')
 
 @bot.event
 async def on_member_join(member):
@@ -111,7 +112,7 @@ async def on_member_join(member):
             ),
             color=discord.Color.gold()
         )
-        embed.set_footer(text="Made with ❤️ by kaizencredits")
+        embed.set_footer(text=f"Made with ❤️ by kaizencredits")
         
         await member.send(embed=embed, view=WelcomeView())
     except Exception as e:
@@ -168,6 +169,85 @@ async def on_message(message):
             return
 
     await bot.process_commands(message)
+
+# ================= 🎟️ نظام التذاكر الجديد (بدل البلاغات) =================
+
+class TicketSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="استفسار عام", description="لأي سؤال أو استفسار بخصوص السيرفر", emoji="❓", value="inquiry"),
+            discord.SelectOption(label="إعلانات وشراكات", description="لطلب الإعلانات أو الشراكات", emoji="📢", value="ads"),
+            discord.SelectOption(label="مشكلة ودعم فني", description="إذا واجهتك مشكلة وتحتاج مساعدة الإدارة", emoji="🛠️", value="support")
+        ]
+        super().__init__(placeholder="اختر نوع التذكرة المناسبة لك...", min_values=1, max_values=1, options=options, custom_id="ticket_select_menu")
+
+    async def callback(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        category = guild.get_channel(TICKET_CATEGORY_ID)
+
+        ticket_types = {
+            "inquiry": "استفسار",
+            "ads": "إعلانات",
+            "support": "دعم-فني"
+        }
+        t_type = ticket_types.get(self.values[0], "تذكرة")
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+        }
+
+        try:
+            ticket_channel = await guild.create_text_channel(
+                name=f"{t_type}-{interaction.user.name}",
+                overwrites=overwrites,
+                category=category if isinstance(category, discord.CategoryChannel) else None
+            )
+        except Exception as e:
+            return await interaction.response.send_message(f"❌ حدث خطأ أثناء إنشاء التذكرة: {e}", ephemeral=True)
+
+        close_view = CloseTicketView()
+        embed = discord.Embed(
+            title=f"🎫 تذكرة جديدة: {t_type}",
+            description=f"مرحباً {interaction.user.mention}!\nتم فتح هذه التذكرة بواسطة قسم **{t_type}**.\nيرجى شرح مشكلتك أو طلبك بالتفصيل وستتم الإجابة عليك قريباً من طرف الإدارة.",
+            color=discord.Color.blue()
+        )
+        await ticket_channel.send(embed=embed, view=close_view)
+        await interaction.response.send_message(f"✅ تم إنشاء تذكرتك بنجاح في القناة: {ticket_channel.mention}", ephemeral=True)
+
+class TicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketSelect())
+
+class CloseTicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="إغلاق التذكرة 🔒", style=discord.ButtonStyle.red, custom_id="close_ticket_btn")
+    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("⚠️ سيتم حذف هذه التذكرة وإغلاقها خلال ثوانٍ...")
+        await asyncio.sleep(2)
+        await interaction.channel.delete()
+
+@bot.command(name="setup_tickets", help="(للإدارة) لإرسال لوحة التذاكر.")
+@commands.has_permissions(administrator=True)
+async def setup_tickets(ctx):
+    try:
+        await ctx.message.delete()
+    except:
+        pass
+        
+    embed = discord.Embed(
+        title="🎫 نظام التذاكر والدعم الفني",
+        description="مرحباً بك في نظام التذاكر الخاص بالسيرفر.\nإذا كنت بحاجة إلى مساعدة، استفسار، أو تريد التحدث بخصوص الإعلانات والشراكات، يرجى اختيار القسم المناسب من القائمة أدناه لفتح تذكرة خاصة بك.",
+        color=discord.Color.from_rgb(47, 49, 54)
+    )
+    embed.set_footer(text="يرجى عدم فتح تذكرة بدون سبب لكي لا تتعرض للعقوبة.")
+    
+    view = TicketView()
+    await ctx.send(embed=embed, view=view)
+
 
 # ================= 📢 أمر البرودكاست =================
 @bot.command(name="massdm", aliases=["broadcast", "dmall"], help="(للإدارة) لإرسال رسالة للأعضاء المتصلين فقط.")
@@ -316,7 +396,7 @@ async def setstrat(ctx):
             "🔹 `$points` (أو `$balance`)\n"
             "   └ **لعرض رصيدك الحالي من النقاط وما يعادلها بالبروبوت.**\n"
             "🔹 `$transfer [@العضو] [المبلغ]` (أو `$pay`)\n"
-            "   └ **لتسهيل تحويل النقاط الخاصة بك لأي عضو آخر بكل سهولة.**\n"
+            "   └ ** لتحويل النقاط الخاصة بك لأي عضو آخر بكل سهولة.**\n"
             "🔹 `$withdraw [المبلغ]`\n"
             "   └ **لطلب سحب نقاطك وتحويلها إلى كريديت بروبوت.**"
         ),
@@ -396,7 +476,7 @@ async def serverinfo(ctx):
 @bot.command(name="list", aliases=["commands", "cmds"], help="لعرض جميع أوامر البوت.")
 async def custom_list(ctx):
     if ctx.author.id not in ADMIN_IDS: return await ctx.send("❌ للإدارة فقط!")
-    commands_list = [f"📌 `${c.name}`\n    └ الوصف: {c.help or 'لا يوجد وصف'}" for c in bot.commands if not c.hidden]
+    commands_list = [f"📌 `${c.name}`\n   └ الوصف: {c.help or 'لا يوجد وصف'}" for c in bot.commands if not c.hidden]
     embed = discord.Embed(title="📋 لائحة أوامر البوت الشاملة", description="هذه قائمة بجميع الأوامر النشطة حالياً:\n\n" + "\n\n".join(commands_list), color=discord.Color.dark_gold())
     try:
         await ctx.author.send(embed=embed)
@@ -644,7 +724,7 @@ async def rps(ctx, choice: str):
     else: result = "🤖 خسرت!"
     await ctx.send(embed=discord.Embed(title="✂️ حجرة ورقة مقص", description=f"اختيارك: {choice}\nاختيار البوت: {bot_choice}\n\n**{result}**", color=discord.Color.purple()))
 
-# ================= 📋 اقتراحات وبلاغات =================
+# ================= 📋 الاقتراحات =================
 @bot.command(name="suggest", help="لإرسال اقتراح.")
 async def suggest(ctx, *, suggestion: str):
     try: await ctx.message.delete()
@@ -657,17 +737,6 @@ async def suggest(ctx, *, suggestion: str):
         await msg.add_reaction("👎")
         if DIVIDER_IMAGE_URL: await ch.send(DIVIDER_IMAGE_URL)
     await ctx.send("✅ تم إرسال اقتراحك!", delete_after=10)
-
-@bot.command(name="report", help="لإرسال بلاغ.")
-async def report_cmd(ctx, *, reason: str):
-    try: await ctx.message.delete()
-    except: pass
-    ch = bot.get_channel(REPORTS_CHANNEL_ID)
-    embed = discord.Embed(title="🚨 بلاغ جديد", description=reason, color=discord.Color.red())
-    if ch:
-        await ch.send(embed=embed)
-        if DIVIDER_IMAGE_URL: await ch.send(DIVIDER_IMAGE_URL)
-    await ctx.send("✅ تم إرسال بلاغك!", delete_after=10)
 
 @bot.command(name="remind", help="تذكير شخصي.")
 async def remind(ctx, time_str: str, *, reminder: str):
@@ -720,14 +789,11 @@ async def rate(ctx, member: discord.Member):
     except:
         await ctx.send("❌ خاص العضو مغلق!", delete_after=10)
 
-# التشغيل الصحيح للبوت دون مشاكل الإدخال اليدوي
+# تشغيل البوت بطريقة آمنة عبر التوكن
 if __name__ == "__main__":
-    token = os.environ.get("DISCORD_TOKEN")
-    if not token:
-        print("[!] خطأ: لم يتم العثور على متغير DISCORD_TOKEN في البيئة!")
-    else:
-        try:
-            bot.run(token)
-        except Exception as e:
-            print("\n[!] خطأ في تشغيل البوت:")
-            traceback.print_exc()
+    token = os.environ.get("DISCORD_TOKEN") or "حط_التوكن_ديالك_هنا_اذا_بغيت"
+    try:
+        bot.run(token)
+    except Exception as e:
+        print("\n[!] خطأ في التشغيل:")
+        traceback.print_exc()
