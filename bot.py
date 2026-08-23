@@ -111,7 +111,7 @@ async def on_member_join(member):
             ),
             color=discord.Color.gold()
         )
-        embed.set_footer(text=f"Made with ❤️ by kaizencredits")
+        embed.set_footer(text="Made with ❤️ by kaizencredits")
         
         await member.send(embed=embed, view=WelcomeView())
     except Exception as e:
@@ -316,7 +316,7 @@ async def setstrat(ctx):
             "🔹 `$points` (أو `$balance`)\n"
             "   └ **لعرض رصيدك الحالي من النقاط وما يعادلها بالبروبوت.**\n"
             "🔹 `$transfer [@العضو] [المبلغ]` (أو `$pay`)\n"
-            "   └ ** لتحويل النقاط الخاصة بك لأي عضو آخر بكل سهولة.**\n"
+            "   └ **لتسهيل تحويل النقاط الخاصة بك لأي عضو آخر بكل سهولة.**\n"
             "🔹 `$withdraw [المبلغ]`\n"
             "   └ **لطلب سحب نقاطك وتحويلها إلى كريديت بروبوت.**"
         ),
@@ -433,7 +433,6 @@ async def transfer(ctx, member: discord.Member, amount_str: str):
     if sender_bal < amount:
         return await ctx.send(f"❌ عذراً، رصيدك غير كافٍ لإتمام عملية التحويل! رصيدك الحالي: `{sender_bal:,}` نقطة.", delete_after=10)
 
-    # خصم الرقم من حساب المرسل وإضافته للمستلم بدقة
     update_store_credit(ctx.author.id, -amount)
     update_store_credit(member.id, amount)
 
@@ -721,9 +720,14 @@ async def rate(ctx, member: discord.Member):
     except:
         await ctx.send("❌ خاص العضو مغلق!", delete_after=10)
 
-try:
-    bot.run(os.environ.get("DISCORD_TOKEN"))
-except Exception as e:
-    print("\n[!] خطأ:")
-    traceback.print_exc()
-    input("\nاضغط Enter للإغلاق...")
+# التشغيل الصحيح للبوت دون مشاكل الإدخال اليدوي
+if __name__ == "__main__":
+    token = os.environ.get("DISCORD_TOKEN")
+    if not token:
+        print("[!] خطأ: لم يتم العثور على متغير DISCORD_TOKEN في البيئة!")
+    else:
+        try:
+            bot.run(token)
+        except Exception as e:
+            print("\n[!] خطأ في تشغيل البوت:")
+            traceback.print_exc()
