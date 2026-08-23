@@ -15,9 +15,10 @@ bot = commands.Bot(command_prefix="$", intents=intents)
 
 store_credits = {}
 EXCHANGE_RATE = 10  
+EMAIL_PRICE_CREDIT = 1500000  # السعر الافتراضي للإيميل بالكريديت (يمكن تعديله عبر setprice)
 
 # الآيدي الخاص بك بوحدك (صاحب السيرفر / المالك - التحكم الكامل في النقاط)
-OWNER_ID = 1021501331636244490 
+OWNER_ID = 1021501331636244490  
 
 # الإدارة العامة (باقي الأوامر مثل come, massdm, say, الخ)
 ADMIN_IDS = [1021501331636244490, 1133434766738329640]
@@ -28,10 +29,12 @@ LOGS_CHANNEL_ID = 1538994821455282197
 DIVIDER_IMAGE_URL = "https://cdn.discordapp.com/attachments/1336759214378582066/1539262263893037086/Gemini_Generated_Image_97gvdg97gvdg97gv.jfif?ex=6a8af331&is=6a89a1b1&hm=d057e94d76fb45c269c7262846cd27c363f1b88d8868586b0aa01121d28e2933"
 
 # إعدادات التذاكر الجديدة
-TICKET_CATEGORY_ID = 1538994814404792480  # الكاتيجوري المخصصة للتذاكر اللي طلبتها
+TICKET_CATEGORY_ID = 1538994814404792480  
+TARGET_AUTO_TICKET_CATEGORY_ID = 1539000813794627664  # الكاتيجوري الجديدة الخاصة بالبانل التلقائي
 TICKET_PANEL_CHANNEL_ID = 1540797737438810172
 
 rated_users = set()
+ticket_payment_data = {}  # لتسجيل خيارات وبيانات الدفع لكل تذكرة
 
 SENSITIVE_WORDS = {
     "متوفر": "مـتـوفــر", "متوفره": "مـتـوفــرة", "متوفرة": "مـتـوفــرة", "توفر": "تـو_فُـر",
@@ -119,6 +122,26 @@ async def on_member_join(member):
         print(f"Could not send welcome DM to {member}: {e}")
 
 @bot.event
+async def on_guild_channel_create(channel):
+    # ميزة تلقائية: إذا تم إنشاء تذكرة جديدة داخل الكاتيجوري المحددة TARGET_AUTO_TICKET_CATEGORY_ID
+    if isinstance(channel, discord.TextChannel) and channel.category and channel.category.id == TARGET_AUTO_TICKET_CATEGORY_ID:
+        # الانتظار قليلاً لضمان ظهور الروم للعضو واستقرار الأذونات
+        await asyncio.sleep(1.5)
+        
+        embed = discord.Embed(
+            title="🛒 اختيار طريقة الدفع",
+            description="مرحباً بك! المرجو اختيار طريقة الدفع التي تريدها لإتمام طلبك من الأزرار أدناه:",
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text="Email Factory - Payment System")
+        
+        view = AutoTicketPaymentView()
+        try:
+            await channel.send(embed=embed, view=view)
+        except Exception as e:
+            print(f"Error sending auto ticket panel: {e}")
+
+@bot.event
 async def on_message(message):
     if message.author.bot:
         return
@@ -170,7 +193,132 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-# ================= 🎟️ نظام التذاكر الجديد (بدل البلاغات) =================
+# ================= 🎟️ نظام التذاكر التلقائي وخيارات الدفع =================
+
+class RobloxGamepassModal(discord.ui.Modal, title="معلومات الدفع عبر روبوكس (Gamepass)"):
+    roblox_user = discord.ui.TextInput(
+        label="يوزر روبلوكس الخاص بك",
+        placeholder="اكتب يوزر حسابك هنا...",
+        required=True,
+        max_length=100
+    )
+    gamepass_id = discord.ui.TextInput(
+        label="آيدي الغيم باص (Gamepass ID)",
+        placeholder="اكتب آيدي الغيم باص هنا...",
+        required=True,
+        max_length=50
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_val = self.roblox_user.value
+        pass_val = self.gamepass_id.value
+        
+        # حفظ البيانات في النظام
+        ticket_payment_data[interaction.channel.id] = {
+            "method": "Robux (Gamepass)",
+            "details": f"يوزر روبلوكس: {user_val} | آيدي الغيم باص: {pass_val}",
+            "user": interaction.user
+        }
+        
+        # تغيير اسم التذكرة لتشمل اختصار روبوكس (rbx) مع اسم العضو
+        try:
+            new_name = f"rbx-{interaction.user.name}".lower()[:30]
+            await interaction.channel.edit(name=new_name)
+        except Exception as e:
+            print(f"Error renaming channel: {e}")
+
+        embed = discord.Embed(
+            title="✅ تم تسجيل معلومات الدفع بنجاح",
+            description=f"**طريقة الدفع:** روبوكس (Gamepass)\n👤 **يوزر روبلوكس:** `{user_val}`\n🆔 **آيدي الغيم باص:** `{pass_val}`\n\nالمرجو الانتظار ريثما تتواصل معك الإدارة.",
+            color=discord.Color.green()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=False)
+
+class DollarsModal(discord.ui.Modal, title="معلومات الدفع بالدولار"):
+    account_info = discord.ui.TextInput(
+        label="معلومات الحساب أو طريقة التحويل",
+        placeholder="اكتب البريد أو تفاصيل حسابك هنا...",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=500
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        info_val = self.account_info.value
+        
+        ticket_payment_data[interaction.channel.id] = {
+            "method": "Dollars",
+            "details": f"معلومات الحساب: {info_val}",
+            "user": interaction.user
+        }
+        
+        try:
+            new_name = f"usd-{interaction.user.name}".lower()[:30]
+            await interaction.channel.edit(name=new_name)
+        except Exception as e:
+            print(f"Error renaming channel: {e}")
+
+        embed = discord.Embed(
+            title="✅ تم تسجيل معلومات الحساب بنجاح",
+            description=f"**طريقة الدفع:** دولار\n📝 **المعلومات:**\n`{info_val}`\n\nالمرجو الانتظار ريثما تتواصل معك الإدارة.",
+            color=discord.Color.green()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=False)
+
+class AutoTicketPaymentView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="كرديت (ProBot)", style=discord.ButtonStyle.primary, emoji="💎", custom_id="pay_credit")
+    async def pay_credit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        ticket_payment_data[interaction.channel.id] = {
+            "method": "Credit",
+            "details": "الدفع عبر كريديت بروبوت",
+            "user": interaction.user
+        }
+        try:
+            new_name = f"crd-{interaction.user.name}".lower()[:30]
+            await interaction.channel.edit(name=new_name)
+        except Exception as e:
+            print(f"Error renaming channel: {e}")
+            
+        embed = discord.Embed(
+            title="💎 تم اختيار الدفع بالكريديت",
+            description=f"تم تحديد طريقة الدفع **كرديت** بنجاح يا {interaction.user.mention}!\nتمت إعادة تسمية التذكرة وستتم إفادتك بأمر التحويل قريباً.",
+            color=discord.Color.gold()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=False)
+
+    @discord.ui.button(label="روبوكس (Robux)", style=discord.ButtonStyle.success, emoji="🎮", custom_id="pay_robux")
+    async def pay_robux(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # فتح الـ Modal الخاص بالروبوكس (يطلب يوزر وآيدي الغيم باص مع التأكد من إرسالها قبل اعتماد الطلب)
+        await interaction.response.send_modal(RobloxGamepassModal())
+
+    @discord.ui.button(label="ادم سي (Adms)", style=discord.ButtonStyle.secondary, emoji="🛡️", custom_id="pay_adms")
+    async def pay_adms(self, interaction: discord.Interaction, button: discord.ui.Button):
+        ticket_payment_data[interaction.channel.id] = {
+            "method": "Adms",
+            "details": "الدفع عبر خدمة Adms",
+            "user": interaction.user
+        }
+        try:
+            new_name = f"c-{interaction.user.name}".lower()[:30] # اختصار c أو ما شابه
+            await interaction.channel.edit(name=new_name)
+        except Exception as e:
+            print(f"Error renaming channel: {e}")
+            
+        embed = discord.Embed(
+            title="🛡️ تم اختيار الدفع عبر Adms",
+            description=f"تم تحديد طريقة الدفع **Adms** بنجاح يا {interaction.user.mention}!",
+            color=discord.Color.blurple()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=False)
+
+    @discord.ui.button(label="دولار (Dollars)", style=discord.ButtonStyle.danger, emoji="💵", custom_id="pay_dollars")
+    async def pay_dollars(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # فتح الـ Modal الخاص بالدولار لطلب معلومات الحساب
+        await interaction.response.send_modal(DollarsModal())
+
 
 class TicketSelect(discord.ui.Select):
     def __init__(self):
@@ -324,8 +472,8 @@ async def massdm(ctx, *, message_content: str):
     
     await status_msg.edit(content=None, embed=final_embed)
 
-# ================= 🎟️ الأمر المختصر ($f @member) - خاص بالمالك فقط =================
-@bot.command(name="f", aliases=["finish"], help="(للمالك فقط) لإنهاء التكت وإضافة 1.5 مليون نقطة للزبون.")
+# ================= 🎟️ الأمر المختصر ($f @member) وزر التقييم =================
+@bot.command(name="f", aliases=["finish"], help="(للمالك فقط) لإنهاء التكت وإضافة النقاط للزبون.")
 async def quick_ticket(ctx, member: discord.Member):
     if ctx.author.id != OWNER_ID:
         return await ctx.send("❌ عذراً، هذا الأمر مخصص لمالك السيرفر (Owner) فقط!", delete_after=10)
@@ -338,6 +486,9 @@ async def quick_ticket(ctx, member: discord.Member):
     except:
         pass
 
+    # عرض معلومات الدفع المسجلة إذا وجدت للتأكد من وضوحها الكامل للإدارة
+    payment_info = ticket_payment_data.get(ctx.channel.id, {"method": "غير محدد", "details": "لا توجد تفاصيل إضافية"})
+
     logs_channel = bot.get_channel(LOGS_CHANNEL_ID)
     if logs_channel:
         embed = discord.Embed(
@@ -345,7 +496,9 @@ async def quick_ticket(ctx, member: discord.Member):
             description=(
                 f"👤 **الزبون:** {member.mention} (`{member.id}`)\n"
                 f"🛠️ **الإداري المشرف:** {ctx.author.mention}\n"
-                f"🏛️ **التكت:** {ctx.channel.name}\n\n"
+                f"🏛️ **التكت:** {ctx.channel.name}\n"
+                f"💳 **طريقة الدفع المختارة:** `{payment_info['method']}`\n"
+                f"📝 **تفاصيل الدفع:** `{payment_info['details']}`\n\n"
                 f"🎁 **الهدية المضافة:** `1,500,000` نقطة (استرداد نقدي Cashback)\n"
                 f"💎 **إجمالي رصيد العضو الحالي:** `{get_store_credit(member.id):,}` نقطة"
             ),
@@ -407,7 +560,11 @@ async def setstrat(ctx):
         name="🧾 الحسابات والماليات",
         value=(
             "🔹 `$tax [المبلغ]`\n"
-            "   └ **لحساب نسبة الضريبة وضريبة الوسيط بدقة متناهية.**"
+            "   └ **لحساب نسبة الضريبة وضريبة الوسيط بدقة متناهية.**\n"
+            "🔹 `$setprice [المبلغ]`\n"
+            "   └ **(للإدارة) لتحديد سعر الإيميل بالكريديت.**\n"
+            "🔹 `$paybot [@العضو/الأيدي] [عدد الإيميلات]`\n"
+            "   └ **أمر تلقائي لحساب المبلغ الإجمالي المطلوب بدقة وإعطاء أمر بروبوت الصحيح 100%.**"
         ),
         inline=False
     )
@@ -421,7 +578,54 @@ async def setstrat(ctx):
     if DIVIDER_IMAGE_URL:
         await ctx.send(DIVIDER_IMAGE_URL)
 
-# ================= 🛠️ أوامر الإدارة الباقية =================
+# ================= 🛠️ أوامر الإدارة وتحديد الأسعار والتحويل الدقيق =================
+
+@bot.command(name="setprice", help="(للإدارة) لتحديد سعر الإيميل بالكريديت.")
+@commands.has_permissions(administrator=True)
+async def setprice(ctx, amount_str: str):
+    global EMAIL_PRICE_CREDIT
+    parsed = parse_amount(amount_str)
+    if parsed is None or parsed < 0:
+        return await ctx.send("❌ المبلغ غير صحيح!", delete_after=10)
+    
+    EMAIL_PRICE_CREDIT = parsed
+    await ctx.send(f"✅ تم تحديث سعر الإيميل بنجاح ليصبح: `{EMAIL_PRICE_CREDIT:,}` كريديت لكل إيميل واحد.")
+
+@bot.command(name="paybot", help="لحساب المبلغ المطلوب بناءً على عدد الإيميلات وإعطاء أمر تحويل بروبوت الدقيق 100%.")
+async def paybot(ctx, member: discord.Member, count_str: str):
+    try:
+        count = int(count_str)
+        if count <= 0:
+            raise ValueError
+    except ValueError:
+        return await ctx.send("❌ يرجى إدخال عدد إيميلات صحيح!", delete_after=10)
+    
+    # حساب المبلغ الإجمالي: السعر الحالي مضروب في عدد الإيميلات
+    total_amount = EMAIL_PRICE_CREDIT * count
+    
+    # حساب ضريبة البروبوت (5%) لتحديد المبلغ الدقيق الذي يجب تحويله مع الضريبة لكي يصل الصافي كاملاً
+    # صيغة بروبوت الدقيقة: المبلغ المطلوب تقسيم 0.95 أو إضافة الضريبة 5%
+    # البروبوت يقتطع 5% من المبلغ المحول، إذن لتحصيل المبلغ x يجب تحويل x / 0.95 أو x + ضريبة 5%
+    tax_amount = round(total_amount * 0.05)
+    final_transfer_amount = total_amount + tax_amount
+
+    embed = discord.Embed(
+        title="🤖 أمر تحويل بروبوت الذكي",
+        description=(
+            f"👤 **المستفيد:** {member.mention} (`{member.id}`)\n"
+            f"📦 **عدد الإيميلات:** `{count}` إيميل\n"
+            f"💰 **سعر الإيميل الواحد:** `{EMAIL_PRICE_CREDIT:,}` كريديت\n"
+            f"💵 **المبلغ الصافي المطلوب:** `{total_amount:,}`\n"
+            f"📊 **ضريبة بروبوت (5%):** `{tax_amount:,}`\n\n"
+            f"🛠️ **أمر بروبوت الجاهز والجاهز للنسخ (بالضريبة لضمان وصول المبلغ كاملاً):**\n"
+            f"```c {member.id} {final_transfer_amount}```"
+        ),
+        color=discord.Color.green()
+    )
+    embed.set_footer(text="Email Factory - Accurate Calculator")
+    await ctx.send(embed=embed)
+
+
 @bot.command(name="say", help="لجعل البوت يرسل رسالة رسمية.")
 async def say(ctx, *, text: str):
     if ctx.author.id not in ADMIN_IDS: return await ctx.send("❌ للإدارة فقط!")
