@@ -118,7 +118,6 @@ async def reset_stock(ctx):
     email_stock.clear()
     await ctx.send("🔄 تم إعادة تعيين وتفريغ المخزن بنجاح.")
 
-# --- أمر حذف وقفل التكت لك وحدك ---
 @bot.command(name="delete")
 @is_owner()
 async def delete_ticket(ctx):
@@ -143,7 +142,7 @@ async def on_message(message):
     if message.author.bot:
         return
     
-    if "تقييم" in message.content.lower() or "feedback" in message.channel.name.lower() or "تقيب" in message.channel.name.lower():
+    if "تقييم" in message.content.lower() or "feedback" in message.channel.name.lower() or "تقيب" in message.content.lower():
         try:
             await message.add_reaction("❤️")
             await message.channel.send(LINE_IMAGE_URL)
@@ -172,15 +171,16 @@ class TicketOpenView(discord.ui.View):
             interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
             guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True)
         }
-        ticket_channel = await guild.create_text_channel(name=f"ticket-{interaction.user.name}", category=category, overwrites=overwrites)
+        ticket_channel = await guild.create_text_channel(name=f"ticket-{interaction.user.name}-1", category=category, overwrites=overwrites)
         
         embed = discord.Embed(title="أهلاً بك في التذكرة", description="يرجى اختيار طريقة الدفع المناسبة لك:\n• روب (Robux)\n• كردت (Credit)\n• دولارات (USD)\n• أدم سي (ADM-C)", color=discord.Color.blue())
-        await ticket_channel.send(content=interaction.user.mention, embed=embed, view=PaymentSelectView())
+        await ticket_channel.send(content=interaction.user.mention, embed=embed, view=PaymentSelectView(1))
         await interaction.response.send_message(f"✅ تم فتح تذكرتك بنجاح: {ticket_channel.mention}", ephemeral=True)
 
 class PaymentSelectView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, current_count):
         super().__init__(timeout=None)
+        self.current_count = current_count
 
     @discord.ui.button(label="روب", style=discord.ButtonStyle.primary, emoji="🤖")
     async def robux(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -203,13 +203,14 @@ class PaymentSelectView(discord.ui.View):
         await interaction.channel.edit(name=new_name)
         
         embed = discord.Embed(title="اختر الكمية المطلوبة", description=f"السعر الحالي للإيمايل: {email_price:,} كردت\nيرجى اختيار عدد الإيمايلات (1, 5, 10, 15):", color=discord.Color.blurple())
-        view = QuantitySelectView(payment_method)
+        view = QuantitySelectView(payment_method, self.current_count)
         await interaction.response.edit_message(embed=embed, view=view)
 
 class QuantitySelectView(discord.ui.View):
-    def __init__(self, payment_method):
+    def __init__(self, payment_method, current_count):
         super().__init__(timeout=None)
         self.payment_method = payment_method
+        self.current_count = current_count
 
     @discord.ui.button(label="1", style=discord.ButtonStyle.primary)
     async def q1(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -237,21 +238,22 @@ class QuantitySelectView(discord.ui.View):
             return
         
         real_email = email_stock.pop(0)
+        total_qty = self.current_count + qty - 1
         
-        embed = discord.Embed(title=f"تفاصيل الحساب (الكمية: {qty})", color=discord.Color.green())
+        embed = discord.Embed(title=f"تفاصيل الحساب (الكمية الإجمالية: {total_qty})", color=discord.Color.green())
         embed.add_field(name="البريد الإلكتروني", value=f"`{real_email}`", inline=False)
         embed.add_field(name="كلمة المرور", value="`1122mhdg`", inline=False)
         embed.add_field(name="عمر الحساب", value="1/1/1999", inline=False)
         embed.set_footer(text="أمامك 15 دقيقة للصنع.")
 
-        view = AccountActionsView(real_email, qty, self.payment_method)
+        view = AccountActionsView(real_email, total_qty, self.payment_method)
         await interaction.response.edit_message(embed=embed, view=view)
 
 class AccountActionsView(discord.ui.View):
-    def __init__(self, email, qty, payment_method):
+    def __init__(self, email, total_qty, payment_method):
         super().__init__(timeout=900)
         self.email = email
-        self.qty = qty
+        self.total_qty = total_qty
         self.payment_method = payment_method
 
     @discord.ui.button(label="تم الصنع", style=discord.ButtonStyle.success)
@@ -261,12 +263,12 @@ class AccountActionsView(discord.ui.View):
             await delivery_ch.send(f"📦 تم تسليم الإيمايل: `{self.email}` | بواسطة العضو {interaction.user.mention} في روم <#{interaction.channel.id}>")
 
         try:
-            await interaction.channel.edit(name=f"{self.qty}-{self.payment_method}")
+            await interaction.channel.edit(name=f"{self.total_qty}-{self.payment_method}")
         except Exception:
             pass
 
-        embed = discord.Embed(title="تم بنجاح!", description="هل تبغي تكمل تصنع أو تنتظر تتسلم على الإيمايل؟", color=discord.Color.gold())
-        view = PostCreationView(self.email, self.payment_method)
+        embed = discord.Embed(title="✨ تم إنجاز المهمة بنجاح!", description=f"يا هلا بالمبدع <@1021501331636244490>، العضو أتم الصنع بكل إتقان واحترافية!\nاختر الخطوة التالية:", color=discord.Color.gold())
+        view = PostCreationView(self.email, self.payment_method, self.total_qty)
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="كيفية الصنع", style=discord.ButtonStyle.secondary)
@@ -275,20 +277,21 @@ class AccountActionsView(discord.ui.View):
 
     @discord.ui.button(label="وقت إضافي (10 د)", style=discord.ButtonStyle.primary)
     async def extra_time(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("⏱️ تم إضافة 10 دقائق إضافية.", ephemeral=True)
+        await interaction.response.send_message("⏱️ تم إضافة 10 دقائق إضافية بنجاح.", ephemeral=True)
 
     @discord.ui.button(label="إلغاء العملية", style=discord.ButtonStyle.danger)
     async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         email_stock.append(self.email)
-        embed = discord.Embed(title="تم إلغاء العملية وإعادة الإيمايل للمخزن", description="هل تريد صنع المزيد أم قفل التكت؟", color=discord.Color.red())
+        embed = discord.Embed(title="🔄 تم إلغاء العملية وإعادة الإيمايل للمخزن", description="هل تريد صنع المزيد أم قفل التكت؟", color=discord.Color.red())
         view = CancelChoiceView()
         await interaction.response.edit_message(embed=embed, view=view)
 
 class PostCreationView(discord.ui.View):
-    def __init__(self, email, payment_method):
+    def __init__(self, email, payment_method, total_qty):
         super().__init__(timeout=None)
         self.email = email
         self.payment_method = payment_method
+        self.total_qty = total_qty
 
     @discord.ui.button(label="إكمال الصنع", style=discord.ButtonStyle.success)
     async def continue_making(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -297,17 +300,30 @@ class PostCreationView(discord.ui.View):
             return
         
         real_email = email_stock.pop(0)
-        embed = discord.Embed(title="تفاصيل الحساب الجديد", color=discord.Color.green())
+        new_total = self.total_qty + 1
+        
+        try:
+            await interaction.channel.edit(name=f"ticket-{interaction.user.name}-{new_total}")
+        except Exception:
+            pass
+
+        embed = discord.Embed(title=f"📦 تفاصيل الحساب الجديد (العدد الإجمالي: {new_total})", color=discord.Color.green())
         embed.add_field(name="البريد الإلكتروني", value=f"`{real_email}`", inline=False)
         embed.add_field(name="كلمة المرور", value="`1122mhdg`", inline=False)
         embed.add_field(name="عمر الحساب", value="1/1/1999", inline=False)
         
-        view = AccountActionsView(real_email, 1, self.payment_method)
+        view = AccountActionsView(real_email, new_total, self.payment_method)
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="انتظار التسليم", style=discord.ButtonStyle.primary)
     async def wait_delivery(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("⏳ تم تفعيل وضع الانتظار بنجاح.", ephemeral=True)
+        # تعطيل زر إكمال الصنع عند اختيار انتظار التسليم لكي يمنع صنع المزيد نهائياً
+        for child in self.children:
+            if child.label == "إكمال الصنع":
+                child.disabled = True
+        
+        embed = discord.Embed(title="⏳ تم تفعيل وضع انتظار التسليم", description=f"تنبيه للمطور العبقري <@1021501331636244490>: العضو ينتظر تسليم الطلب النهائي الآن ولا يمكنه طلب إيمايلات أخرى في هذه التذكرة.", color=discord.Color.blue())
+        await interaction.response.edit_message(embed=embed, view=self)
 
 class CancelChoiceView(discord.ui.View):
     def __init__(self):
@@ -316,7 +332,7 @@ class CancelChoiceView(discord.ui.View):
     @discord.ui.button(label="صنع المزيد", style=discord.ButtonStyle.primary)
     async def more(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(title="اختر طريقة الدفع", description="يرجى اختيار طريقة الدفع:", color=discord.Color.blurple())
-        await interaction.response.edit_message(embed=embed, view=PaymentSelectView())
+        await interaction.response.edit_message(embed=embed, view=PaymentSelectView(1))
 
     @discord.ui.button(label="قفل التكت", style=discord.ButtonStyle.danger)
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
