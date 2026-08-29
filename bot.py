@@ -71,7 +71,7 @@ async def admin_list(ctx):
     embed.add_field(name="$reset", value="تفريغ وإعادة تعيين المخزن", inline=False)
     embed.add_field(name="$setprice [السعر]", value="تحديد سعر الإيمايل بكردت (يدعم 35m)", inline=False)
     embed.add_field(name="$panel", value="إرسال بانل فتح التذاكر", inline=False)
-    embed.add_field(name="$tax [المبلغ]", value="حساب ضريبة بروبوت", inline=False)
+    embed.add_field(name="$delete", value="قفل وحذف التذكرة مع إرسال الترانسكريبت للوج", inline=False)
     await ctx.send(embed=embed)
 
 @bot.command(name="add")
@@ -117,6 +117,26 @@ class StockRefreshView(discord.ui.View):
 async def reset_stock(ctx):
     email_stock.clear()
     await ctx.send("🔄 تم إعادة تعيين وتفريغ المخزن بنجاح.")
+
+# --- أمر حذف وقفل التكت لك وحدك ---
+@bot.command(name="delete")
+@is_owner()
+async def delete_ticket(ctx):
+    channel = ctx.channel
+    messages_logs = []
+    async for msg in channel.history(limit=100, oldest_first=True):
+        messages_logs.append(f"[{msg.created_at.strftime('%Y-%m-%d %H:%M')}] {msg.author.name}: {msg.content}")
+    
+    transcript_text = "\n".join(messages_logs)
+    if len(transcript_text) > 1900:
+        transcript_text = transcript_text[:1900] + "\n... (تم الاختصار)"
+
+    log_ch = ctx.guild.get_channel(LOG_CHANNEL_ID)
+    if log_ch:
+        embed = discord.Embed(title=f"📁 ترانسكريبت تذكرة: {channel.name}", description=f"أغلق بواسطة المسؤول: {ctx.author.mention}\n\n**محتوى التذكرة:**\n```text\n{transcript_text}\n```", color=discord.Color.orange())
+        await log_ch.send(embed=embed)
+        
+    await channel.delete()
 
 @bot.event
 async def on_message(message):
@@ -216,7 +236,6 @@ class QuantitySelectView(discord.ui.View):
             await interaction.response.send_message("❌ عذراً، الإيمايلات في المخزن لا تكفي حالياً.", ephemeral=True)
             return
         
-        # سحب أول إيمايل حقيقي أضفته أنت للمخزن
         real_email = email_stock.pop(0)
         
         embed = discord.Embed(title=f"تفاصيل الحساب (الكمية: {qty})", color=discord.Color.green())
@@ -247,7 +266,7 @@ class AccountActionsView(discord.ui.View):
             pass
 
         embed = discord.Embed(title="تم بنجاح!", description="هل تبغي تكمل تصنع أو تنتظر تتسلم على الإيمايل؟", color=discord.Color.gold())
-        view = PostCreationView(self.email)
+        view = PostCreationView(self.email, self.payment_method)
         await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="كيفية الصنع", style=discord.ButtonStyle.secondary)
@@ -260,23 +279,35 @@ class AccountActionsView(discord.ui.View):
 
     @discord.ui.button(label="إلغاء العملية", style=discord.ButtonStyle.danger)
     async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        email_stock.append(self.email)  # إعادة الإيمايل للمخزن عند الإلغاء
+        email_stock.append(self.email)
         embed = discord.Embed(title="تم إلغاء العملية وإعادة الإيمايل للمخزن", description="هل تريد صنع المزيد أم قفل التكت؟", color=discord.Color.red())
         view = CancelChoiceView()
         await interaction.response.edit_message(embed=embed, view=view)
 
 class PostCreationView(discord.ui.View):
-    def __init__(self, email):
+    def __init__(self, email, payment_method):
         super().__init__(timeout=None)
         self.email = email
+        self.payment_method = payment_method
 
     @discord.ui.button(label="إكمال الصنع", style=discord.ButtonStyle.success)
     async def continue_making(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("🔄 جاري سحب إيمايل جديد من المخزن...", ephemeral=True)
+        if len(email_stock) < 1:
+            await interaction.response.send_message("❌ عذراً، مخزن الإيمايلات نفد تماماً!", ephemeral=True)
+            return
+        
+        real_email = email_stock.pop(0)
+        embed = discord.Embed(title="تفاصيل الحساب الجديد", color=discord.Color.green())
+        embed.add_field(name="البريد الإلكتروني", value=f"`{real_email}`", inline=False)
+        embed.add_field(name="كلمة المرور", value="`1122mhdg`", inline=False)
+        embed.add_field(name="عمر الحساب", value="1/1/1999", inline=False)
+        
+        view = AccountActionsView(real_email, 1, self.payment_method)
+        await interaction.response.edit_message(embed=embed, view=view)
 
     @discord.ui.button(label="انتظار التسليم", style=discord.ButtonStyle.primary)
     async def wait_delivery(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("⏳ تم تفعيل وضع الانتظار.", ephemeral=True)
+        await interaction.response.send_message("⏳ تم تفعيل وضع الانتظار بنجاح.", ephemeral=True)
 
 class CancelChoiceView(discord.ui.View):
     def __init__(self):
@@ -290,8 +321,6 @@ class CancelChoiceView(discord.ui.View):
     @discord.ui.button(label="قفل التكت", style=discord.ButtonStyle.danger)
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         channel = interaction.channel
-        
-        # إنشاء سجل المحادثات (Transcript) وإرساله لروم اللوج
         messages_logs = []
         async for msg in channel.history(limit=100, oldest_first=True):
             messages_logs.append(f"[{msg.created_at.strftime('%Y-%m-%d %H:%M')}] {msg.author.name}: {msg.content}")
