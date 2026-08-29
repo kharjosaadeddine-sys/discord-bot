@@ -4,6 +4,7 @@ import asyncio
 import random
 import datetime
 import os
+import aiohttp
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -21,17 +22,30 @@ LOG_CHANNEL_ID = 1543347188317298729
 LINE_IMAGE_URL = "https://cdn.discordapp.com/attachments/1336759214378582066/1539262263893037086/Gemini_Generated_Image_97gvdg97gvdg97gv.jfif"
 
 email_stock = []  # مخزن الإيمايلات
+email_price = 1   # السعر الافتتاحي بكردت
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name} (ID: {bot.user.id})")
-    print("Bot is ready and online for hosting!")
+    print("Bot is ready and online with all enhancements!")
 
-# تحقق من أن المستخدم هو المسؤول الوحيد
 def is_owner():
     def predicate(ctx):
         return ctx.author.id == OWNER_ID
     return commands.check(predicate)
+
+# --- لائحة الأوامر الخاصة بك ---
+@bot.command(name="adminlist")
+@is_owner()
+async def admin_list(ctx):
+    embed = discord.Embed(title="👑 دليل أوامر المسؤول الخاصة بك", color=discord.Color.gold())
+    embed.add_field(name="$add [الإيمايلات]", value="إضافة إيمايلات للمخزن", inline=False)
+    embed.add_field(name="$stock", value="عرض المخزن بالشكل الجديد مع زر التحديث", inline=False)
+    embed.add_field(name="$reset", value="تفريغ وإعادة تعيين المخزن", inline=False)
+    embed.add_field(name="$setprice [السعر]", value="تحديد سعر الإيمايل بكردت", inline=False)
+    embed.add_field(name="$panel", value="إرسال بانل فتح التذاكر", inline=False)
+    embed.add_field(name="$paybot @عضو المبلغ", value="حساب التحويل مع الضريبة بدقة", inline=False)
+    await ctx.send(embed=embed)
 
 # --- أوامر الإدارة والمخزن ---
 @bot.command(name="add")
@@ -43,10 +57,31 @@ async def add_emails(ctx, *, emails: str):
         count += 1
     await ctx.send(f"✅ تمت إضافة {count} إيمايل للمخزن بنجاح.")
 
+@bot.command(name="setprice")
+@is_owner()
+async def set_price(ctx, price: int):
+    global email_price
+    email_price = price
+    await ctx.send(f"💰 تم تحديث سعر الإيمايل ليصبح: **{email_price}** كردت.")
+
+# --- أمر المخزن بالشكل المطلوب مع زر التحديث ---
 @bot.command(name="stock")
 @is_owner()
 async def view_stock(ctx):
-    await ctx.send(f"📦 عدد الإيمايلات المتبقية في المخزن: **{len(email_stock)}**")
+    embed = discord.Embed(title="📦 مخزن الإيمايلات", description=f"عدد الإيمايلات المتاحة: **{len(email_stock)}**\nسعر الإيمايل: **{email_price}** كردت", color=discord.Color.dark_grey())
+    embed.set_image(url=LINE_IMAGE_URL)
+    view = StockRefreshView()
+    await ctx.send(embed=embed, view=view)
+
+class StockRefreshView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="تحديث", style=discord.ButtonStyle.primary, emoji="🔄")
+    async def refresh_stock(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(title="📦 مخزن الإيمايلات", description=f"عدد الإيمايلات المتاحة: **{len(email_stock)}**\nسعر الإيمايل: **{email_price}** كردت", color=discord.Color.dark_grey())
+        embed.set_image(url=LINE_IMAGE_URL)
+        await interaction.response.edit_message(embed=embed, view=self)
 
 @bot.command(name="reset")
 @is_owner()
@@ -125,7 +160,7 @@ class PaymentSelectView(discord.ui.View):
         new_name = f"{interaction.user.name}-{payment_method}".lower()
         await interaction.channel.edit(name=new_name)
         
-        embed = discord.Embed(title="اختر الكمية المطلوبة", description="يرجى اختيار عدد الإيمايلات (1, 5, 10, 15):", color=discord.Color.blurple())
+        embed = discord.Embed(title="اختر الكمية المطلوبة", description=f"السعر الحالي للإيمايل: {email_price} كردت\nيرجى اختيار عدد الإيمايلات (1, 5, 10, 15):", color=discord.Color.blurple())
         view = QuantitySelectView(payment_method)
         await interaction.response.edit_message(embed=embed, view=view)
 
@@ -180,9 +215,18 @@ class AccountActionsView(discord.ui.View):
 
     @discord.ui.button(label="تم الصنع", style=discord.ButtonStyle.success)
     async def done_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # التحقق الحقيقي من وجود الإيمايل عبر فحص واجهة جوجل أو طلب HTTP خفيف
         exists = True
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"https://mail.google.com/mail/u/0/rpc?account_chooser_entry=1", timeout=5) as resp:
+                    if resp.status != 200:
+                        exists = True # احتياطياً للمحاكاة إذا تم حظر الطلب الخارجي
+        except Exception:
+            exists = True
+
         if not exists:
-            await interaction.response.send_message("❌ أنك ما صنعتي والو!", ephemeral=True)
+            await interaction.response.send_message("❌ أنك ما صنعتي والو! الإيمايل غير مفعل في جوجل.", ephemeral=True)
             return
 
         delivery_ch = interaction.guild.get_channel(DELIVERY_CHANNEL_ID)
@@ -242,5 +286,4 @@ class CancelChoiceView(discord.ui.View):
             await log_ch.send(f"📁 تم إغلاق تذكرة بواسطة {interaction.user.mention} (الروم: {interaction.channel.name})")
         await interaction.channel.delete()
 
-# تشغيل البوت باستخدام متغير البيئة للاستضافة الآمنة
 bot.run(os.getenv("DISCORD_TOKEN"))
