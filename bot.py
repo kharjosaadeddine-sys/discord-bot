@@ -222,7 +222,7 @@ class PostCreationView(discord.ui.View):
     async def continue_making(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("🔄 جاري إعداد إيمايل جديد...", ephemeral=True)
 
-    @discord.ui.button(label="انتظار التسليم", style=discord.UI.Button, style=discord.ButtonStyle.primary) # تم تعديلها للتأكيد
+    @discord.ui.button(label="انتظار التسليم", style=discord.ButtonStyle.primary)
     async def wait_delivery(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("⏳ تم تفعيل وضع الانتظار. لا يمكنك طلب إيمايل جديد حتى الاستلام.", ephemeral=True)
 
